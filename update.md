@@ -172,5 +172,143 @@ Added support for Gemini's built-in tools:
 ```
 
 - **google_search** - Grounding with Google Search (already in upstream)
-- **code_execution** - Agentic Vision, Python execution (PR #1317)
-- **url_context** - Live URL content fetching (PR #1317)
+- **code_execution** - Agentic Vision, Python execution (Issue #1318)
+- **url_context** - Live URL content fetching (Issue #1318)
+
+---
+
+## Using Agentic Vision
+
+Gemini 3 Flash's **Agentic Vision** uses code execution to analyze images with Python. The model can draw bounding boxes, annotations, count objects, and manipulate images.
+
+### Requirements
+
+1. Model: `gemini-3-flash-preview` or `gemini-2.5-flash`
+2. Tool: `code_execution` enabled
+3. Input: An image (base64 or URL)
+
+### Basic Request
+
+```bash
+curl http://localhost:8317/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-proxy" \
+  -d '{
+    "model": "gemini-3-flash-preview",
+    "messages": [{
+      "role": "user",
+      "content": [
+        {"type": "text", "text": "Count the objects and draw bounding boxes around each one."},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,YOUR_BASE64_HERE"}}
+      ]
+    }],
+    "tools": [{"code_execution": {}}],
+    "max_tokens": 4000
+  }'
+```
+
+### Example Use Cases
+
+#### 1. Object Detection with Bounding Boxes
+```json
+{
+  "content": [
+    {"type": "text", "text": "Identify all objects and draw bounding boxes with labels."},
+    {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
+  ],
+  "tools": [{"code_execution": {}}]
+}
+```
+
+#### 2. Image Occlusion for Studying
+```json
+{
+  "content": [
+    {"type": "text", "text": "Create image occlusion by drawing red boxes over key terms and answers for studying."},
+    {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
+  ],
+  "tools": [{"code_execution": {}}]
+}
+```
+
+#### 3. Chart/Graph Analysis
+```json
+{
+  "content": [
+    {"type": "text", "text": "Extract data from this chart using code execution."},
+    {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
+  ],
+  "tools": [{"code_execution": {}}]
+}
+```
+
+### Response Format
+
+The model returns Python code that would annotate/analyze the image:
+
+```python
+import PIL.Image
+import PIL.ImageDraw
+
+img = PIL.Image.open('input_file_0.png')
+draw = PIL.ImageDraw.Draw(img)
+
+# Bounding boxes with normalized coordinates [ymin, xmin, ymax, xmax]
+boxes = [
+    {'box_2d': [100, 80, 200, 300], 'label': 'object1'},
+    {'box_2d': [250, 150, 400, 350], 'label': 'object2'},
+]
+
+for box in boxes:
+    ymin, xmin, ymax, xmax = box['box_2d']
+    # Convert normalized (0-1000) to pixel coordinates
+    left = xmin * width / 1000
+    top = ymin * height / 1000
+    right = xmax * width / 1000
+    bottom = ymax * height / 1000
+    draw.rectangle([left, top, right, bottom], outline='red', width=3)
+
+img.save('transformed_image.png')
+```
+
+### Available Python Libraries
+
+- `PIL` (Pillow) - Image manipulation
+- `numpy` - Numerical operations
+- `pandas` - Data analysis
+- `matplotlib` - Plotting
+
+### Limitations
+
+- 30 second timeout per code execution
+- Up to 5 executions per request
+- No file I/O beyond input/output images
+- No custom library installation
+
+### Combining Tools
+
+You can use multiple tools together:
+
+```json
+{
+  "tools": [
+    {"code_execution": {}},
+    {"google_search": {}},
+    {"url_context": {}}
+  ]
+}
+```
+
+### URL Context Example
+
+Fetch and analyze web content:
+
+```json
+{
+  "messages": [{
+    "role": "user",
+    "content": "Summarize the content at https://example.com/article"
+  }],
+  "tools": [{"url_context": {}}]
+}
+```
