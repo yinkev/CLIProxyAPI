@@ -1,3 +1,21 @@
+# CLIProxyAPI
+
+OpenAI-compatible API proxy for AI CLI tools including Codex, Gemini CLI, Claude Code, Qwen Code, iFlow, and related provider-backed workflows.
+
+CLIProxyAPI lets developers expose CLI-backed AI tools through familiar OpenAI, Gemini, Claude, and Codex-compatible API surfaces. It is useful for local automation, agent integrations, protocol testing, multi-account routing, and building AI developer tools that need a stable API layer over CLI workflows.
+
+## Maintainer Note
+
+This fork is maintained by Kevin Yin (yinkev) as an active downstream branch focused on protocol correctness, compatibility testing, streaming/tool-call behavior, documentation, and AI developer tooling workflows.
+
+Related upstream and ecosystem work:
+
+- Upstream CLIProxyAPI contribution: merged PR #1317
+- Hermes Agent contributions: recent PRs including gateway command routing (#40130) and Desktop statusbar fixes (#40134)
+- OpenAI Codex participation: issue triage and test-backed patch proposal
+
+---
+
 # CLI Proxy API
 
 English | [中文](README_CN.md)
