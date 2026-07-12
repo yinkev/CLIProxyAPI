@@ -870,6 +870,76 @@ func TestCleanJSONSchemaForAntigravity_BooleanEnumToString(t *testing.T) {
 	}
 }
 
+func TestCleanJSONSchemaForGemini_RemovesGeminiUnsupportedMetadataFields(t *testing.T) {
+	input := `{
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "root-schema",
+		"$comment": "root comment should be removed",
+		"type": "object",
+		"properties": {
+			"payload": {
+				"type": "object",
+				"$comment": "nested comment should be removed",
+				"prefill": "hello",
+				"properties": {
+					"mode": {
+						"type": "string",
+						"enum": ["a", "b"],
+						"enumDescriptions": ["Alpha", "Beta"],
+						"enumTitles": ["A", "B"]
+					}
+				},
+				"patternProperties": {
+					"^x-": {"type": "string"}
+				}
+			},
+			"$id": {
+				"type": "string",
+				"description": "property name should not be removed"
+			},
+			"$comment": {
+				"type": "string",
+				"description": "property name should not be removed"
+			},
+			"enumDescriptions": {
+				"type": "array",
+				"description": "property name should not be removed"
+			}
+		}
+	}`
+
+	expected := `{
+		"type": "object",
+		"properties": {
+			"payload": {
+				"type": "object",
+				"properties": {
+					"mode": {
+						"type": "string",
+						"enum": ["a", "b"],
+						"description": "Allowed: a, b"
+					}
+				}
+			},
+			"$id": {
+				"type": "string",
+				"description": "property name should not be removed"
+			},
+			"$comment": {
+				"type": "string",
+				"description": "property name should not be removed"
+			},
+			"enumDescriptions": {
+				"type": "array",
+				"description": "property name should not be removed"
+			}
+		}
+	}`
+
+	result := CleanJSONSchemaForGemini(input)
+	compareJSON(t, expected, result)
+}
+
 func TestRemoveExtensionFields(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -993,5 +1063,29 @@ func TestRemoveExtensionFields(t *testing.T) {
 			actual := removeExtensionFields(tt.input)
 			compareJSON(t, tt.expected, actual)
 		})
+	}
+}
+
+// uniqueItems should be stripped and moved to description hint (#2123).
+func TestCleanJSONSchemaForAntigravity_UniqueItemsStripped(t *testing.T) {
+	input := `{
+		"type": "object",
+		"properties": {
+			"ids": {
+				"type": "array",
+				"description": "Unique identifiers",
+				"items": {"type": "string"},
+				"uniqueItems": true
+			}
+		}
+	}`
+
+	result := CleanJSONSchemaForAntigravity(input)
+
+	if strings.Contains(result, `"uniqueItems"`) {
+		t.Errorf("uniqueItems should be removed from schema")
+	}
+	if !strings.Contains(result, "uniqueItems: true") {
+		t.Errorf("uniqueItems hint missing in description")
 	}
 }

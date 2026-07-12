@@ -5,20 +5,24 @@ package middleware
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/logging"
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/util"
+	"github.com/klauspost/compress/zstd"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 )
+
+const maxErrorOnlyCapturedRequestBodyBytes int64 = 1 << 20 // 1 MiB
 
 // RequestLoggingMiddleware creates a Gin middleware that logs HTTP requests and responses.
 // It captures detailed information about the request and response, including headers and body,
-// and uses the provided RequestLogger to record this data. When logging is disabled in the
-// logger, it still captures data so that upstream errors can be persisted.
+// and uses the provided RequestLogger to record this data. When full request logging is disabled,
+// body capture is limited to small known-size payloads to avoid large per-request memory spikes.
 func RequestLoggingMiddleware(logger logging.RequestLogger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if logger == nil {
@@ -26,7 +30,7 @@ func RequestLoggingMiddleware(logger logging.RequestLogger) gin.HandlerFunc {
 			return
 		}
 
-		if c.Request.Method == http.MethodGet {
+		if shouldSkipMethodForRequestLogging(c.Request) {
 			c.Next()
 			return
 		}
@@ -37,8 +41,10 @@ func RequestLoggingMiddleware(logger logging.RequestLogger) gin.HandlerFunc {
 			return
 		}
 
+		loggerEnabled := logger.IsEnabled()
+
 		// Capture request information
-		requestInfo, err := captureRequestInfo(c)
+		requestInfo, err := captureRequestInfo(c, shouldCaptureRequestBody(loggerEnabled, c.Request))
 		if err != nil {
 			// Log error but continue processing
 			// In a real implementation, you might want to use a proper logger here
@@ -48,10 +54,11 @@ func RequestLoggingMiddleware(logger logging.RequestLogger) gin.HandlerFunc {
 
 		// Create response writer wrapper
 		wrapper := NewResponseWriterWrapper(c.Writer, logger, requestInfo)
-		if !logger.IsEnabled() {
+		if !loggerEnabled {
 			wrapper.logOnErrorOnly = true
 		}
 		c.Writer = wrapper
+		attachRequestLogSources(c, logger, loggerEnabled)
 
 		// Process the request
 		c.Next()
@@ -64,10 +71,76 @@ func RequestLoggingMiddleware(logger logging.RequestLogger) gin.HandlerFunc {
 	}
 }
 
+type fileBodySourceFactory interface {
+	NewFileBodySource(prefix string) (*logging.FileBodySource, error)
+}
+
+func attachRequestLogSources(c *gin.Context, logger logging.RequestLogger, loggerEnabled bool) {
+	if c == nil || !loggerEnabled {
+		return
+	}
+	factory, ok := logger.(fileBodySourceFactory)
+	if !ok || factory == nil {
+		return
+	}
+	if source, errSource := factory.NewFileBodySource("api-request"); errSource == nil {
+		c.Set(logging.APIRequestSourceContextKey, source)
+	}
+	if source, errSource := factory.NewFileBodySource("api-response"); errSource == nil {
+		c.Set(logging.APIResponseSourceContextKey, source)
+	}
+	if !isResponsesWebsocketUpgrade(c.Request) {
+		return
+	}
+	if source, errSource := factory.NewFileBodySource("websocket-timeline"); errSource == nil {
+		c.Set(logging.WebsocketTimelineSourceContextKey, source)
+	}
+	if source, errSource := factory.NewFileBodySource("api-websocket-timeline"); errSource == nil {
+		c.Set(logging.APIWebsocketTimelineSourceContextKey, source)
+	}
+}
+
+func shouldSkipMethodForRequestLogging(req *http.Request) bool {
+	if req == nil {
+		return true
+	}
+	if req.Method != http.MethodGet {
+		return false
+	}
+	return !isResponsesWebsocketUpgrade(req)
+}
+
+func isResponsesWebsocketUpgrade(req *http.Request) bool {
+	if req == nil || req.URL == nil {
+		return false
+	}
+	if req.URL.Path != "/v1/responses" && req.URL.Path != "/backend-api/codex/responses" {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(req.Header.Get("Upgrade")), "websocket")
+}
+
+func shouldCaptureRequestBody(loggerEnabled bool, req *http.Request) bool {
+	if loggerEnabled {
+		return true
+	}
+	if req == nil || req.Body == nil {
+		return false
+	}
+	contentType := strings.ToLower(strings.TrimSpace(req.Header.Get("Content-Type")))
+	if strings.HasPrefix(contentType, "multipart/form-data") {
+		return false
+	}
+	if req.ContentLength <= 0 {
+		return false
+	}
+	return req.ContentLength <= maxErrorOnlyCapturedRequestBodyBytes
+}
+
 // captureRequestInfo extracts relevant information from the incoming HTTP request.
 // It captures the URL, method, headers, and body. The request body is read and then
 // restored so that it can be processed by subsequent handlers.
-func captureRequestInfo(c *gin.Context) (*RequestInfo, error) {
+func captureRequestInfo(c *gin.Context, captureBody bool) (*RequestInfo, error) {
 	// Capture URL with sensitive query parameters masked
 	maskedQuery := util.MaskSensitiveQuery(c.Request.URL.RawQuery)
 	url := c.Request.URL.Path
@@ -86,7 +159,7 @@ func captureRequestInfo(c *gin.Context) (*RequestInfo, error) {
 
 	// Capture request body
 	var body []byte
-	if c.Request.Body != nil {
+	if captureBody && c.Request.Body != nil {
 		// Read the body
 		bodyBytes, err := io.ReadAll(c.Request.Body)
 		if err != nil {
@@ -95,7 +168,7 @@ func captureRequestInfo(c *gin.Context) (*RequestInfo, error) {
 
 		// Restore the body for the actual request processing
 		c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-		body = bodyBytes
+		body = decodeCapturedRequestBodyForLog(bodyBytes, c.Request.Header.Get("Content-Encoding"))
 	}
 
 	return &RequestInfo{
@@ -108,16 +181,64 @@ func captureRequestInfo(c *gin.Context) (*RequestInfo, error) {
 	}, nil
 }
 
+func decodeCapturedRequestBodyForLog(raw []byte, encoding string) []byte {
+	if len(raw) == 0 {
+		return raw
+	}
+
+	decoded, errDecode := decodeCapturedRequestBody(raw, encoding)
+	if errDecode != nil {
+		return raw
+	}
+	return decoded
+}
+
+func decodeCapturedRequestBody(raw []byte, encoding string) ([]byte, error) {
+	encoding = strings.TrimSpace(encoding)
+	if encoding == "" || strings.EqualFold(encoding, "identity") {
+		return raw, nil
+	}
+
+	parts := strings.Split(encoding, ",")
+	body := raw
+	for i := len(parts) - 1; i >= 0; i-- {
+		enc := strings.ToLower(strings.TrimSpace(parts[i]))
+		switch enc {
+		case "", "identity":
+			continue
+		case "zstd":
+			decoded, errDecode := decodeCapturedZstdRequestBody(body)
+			if errDecode != nil {
+				return nil, errDecode
+			}
+			body = decoded
+		default:
+			return nil, fmt.Errorf("unsupported request content encoding: %s", enc)
+		}
+	}
+	return body, nil
+}
+
+func decodeCapturedZstdRequestBody(raw []byte) ([]byte, error) {
+	decoder, errNewReader := zstd.NewReader(bytes.NewReader(raw))
+	if errNewReader != nil {
+		return nil, fmt.Errorf("failed to create zstd request decoder: %w", errNewReader)
+	}
+	defer decoder.Close()
+
+	decoded, errRead := io.ReadAll(decoder)
+	if errRead != nil {
+		return nil, fmt.Errorf("failed to decode zstd request body: %w", errRead)
+	}
+	return decoded, nil
+}
+
 // shouldLogRequest determines whether the request should be logged.
 // It skips management endpoints to avoid leaking secrets but allows
 // all other routes, including module-provided ones, to honor request-log.
 func shouldLogRequest(path string) bool {
 	if strings.HasPrefix(path, "/v0/management") || strings.HasPrefix(path, "/management") {
 		return false
-	}
-
-	if strings.HasPrefix(path, "/api") {
-		return strings.HasPrefix(path, "/api/provider")
 	}
 
 	return true

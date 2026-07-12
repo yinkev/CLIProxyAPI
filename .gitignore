@@ -13,6 +13,8 @@ logs/*
 conv/*
 temp/*
 refs/*
+plugins/*
+examples/plugin/bin/*
 
 # Storage backends
 pgstore/*
@@ -24,6 +26,7 @@ static/*
 
 # Authentication data
 auths/*
+/auths
 !auths/.gitkeep
 
 # Documentation
@@ -34,14 +37,18 @@ GEMINI.md
 
 # Tooling metadata
 .vscode/*
+.worktrees/
 .codex/*
 .claude/*
+.claude
 .gemini/*
 .serena/*
 .agent/*
-.agents/*
+.agents
 .agents/*
 .opencode/*
+.idea/*
+.beads/*
 .bmad/*
 _bmad/*
 _bmad-output/*
@@ -49,3 +56,4 @@ _bmad-output/*
 # macOS
 .DS_Store
 ._*
+.gocache/
