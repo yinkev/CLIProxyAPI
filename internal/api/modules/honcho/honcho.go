@@ -165,8 +165,9 @@ func (m *Module) handleEmbeddings(c *gin.Context) {
 
 	resp, err := m.client.Do(req)
 	if err != nil {
+		log.WithError(err).Error("honcho embedding upstream request failed")
 		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{
-			"message": fmt.Sprintf("honcho embedding upstream unreachable: %v", err),
+			"message": "honcho embedding upstream unreachable",
 			"type":    "honcho_upstream_error",
 		}})
 		return
