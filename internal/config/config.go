@@ -109,6 +109,10 @@ type Config struct {
 	// WebsocketAuth enables or disables authentication for the WebSocket API.
 	WebsocketAuth bool `yaml:"ws-auth" json:"ws-auth"`
 
+	// HonchoEmbedding exposes a local, Honcho-specific OpenAI-compatible embedding adapter.
+	// Disabled by default; optional and isolated from normal /v1 traffic.
+	HonchoEmbedding HonchoEmbeddingConfig `yaml:"honcho-embedding" json:"honcho-embedding"`
+
 	// AntigravitySignatureCacheEnabled controls whether signature cache validation is enabled for thinking blocks.
 	// When true (default), cached signatures are preferred and validated.
 	// When false, client signatures are used directly after normalization (bypass mode).
@@ -280,6 +284,28 @@ type CodexHeaderDefaults struct {
 // CodexConfig configures provider-wide Codex request behavior.
 type CodexConfig struct {
 	IdentityConfuse bool `yaml:"identity-confuse" json:"identity-confuse"`
+}
+
+// HonchoEmbeddingConfig configures the isolated Honcho embedding adapter route.
+type HonchoEmbeddingConfig struct {
+	// Enabled toggles the /honcho/v1/embeddings adapter route.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+
+	// UpstreamBaseURL is the OpenAI-compatible base URL for the embedding server.
+	// Examples: http://127.0.0.1:8098/v1 or http://127.0.0.1:8098.
+	UpstreamBaseURL string `yaml:"upstream-base-url" json:"upstream-base-url"`
+
+	// ServedModel is the upstream model name sent to the embedding server.
+	ServedModel string `yaml:"served-model" json:"served-model"`
+
+	// Dimensions is the output vector size Honcho expects. Honcho pgvector currently expects 1536.
+	Dimensions int `yaml:"dimensions" json:"dimensions"`
+
+	// Normalize controls whether adapter-truncated embeddings are L2-normalized before returning.
+	Normalize bool `yaml:"normalize" json:"normalize"`
+
+	// UpstreamAPIKey optionally sets the Authorization header for the embedding server.
+	UpstreamAPIKey string `yaml:"upstream-api-key,omitempty" json:"-"`
 }
 
 // TLSConfig holds HTTPS server settings.
@@ -748,6 +774,8 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	cfg.Pprof.Enable = false
 	cfg.Pprof.Addr = DefaultPprofAddr
 	cfg.RemoteManagement.PanelGitHubRepository = DefaultPanelGitHubRepository
+	cfg.HonchoEmbedding.Dimensions = 1536
+	cfg.HonchoEmbedding.Normalize = true
 	if err = yaml.Unmarshal(data, &cfg); err != nil {
 		if optional {
 			// In cloud deploy mode, if YAML parsing fails, return empty config instead of error.
@@ -836,8 +864,24 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	// Validate raw payload rules and drop invalid entries.
 	cfg.SanitizePayloadRules()
 
+	// Normalize Honcho embedding adapter settings.
+	cfg.SanitizeHonchoEmbedding()
+
 	// Return the populated configuration struct.
 	return &cfg, nil
+}
+
+// SanitizeHonchoEmbedding normalizes the optional Honcho embedding adapter config.
+func (cfg *Config) SanitizeHonchoEmbedding() {
+	if cfg == nil {
+		return
+	}
+	cfg.HonchoEmbedding.UpstreamBaseURL = strings.TrimSpace(cfg.HonchoEmbedding.UpstreamBaseURL)
+	cfg.HonchoEmbedding.ServedModel = strings.TrimSpace(cfg.HonchoEmbedding.ServedModel)
+	cfg.HonchoEmbedding.UpstreamAPIKey = strings.TrimSpace(cfg.HonchoEmbedding.UpstreamAPIKey)
+	if cfg.HonchoEmbedding.Dimensions <= 0 {
+		cfg.HonchoEmbedding.Dimensions = 1536
+	}
 }
 
 // NormalizePluginsConfig applies default plugin configuration values.

@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,6 +28,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/access"
 	managementHandlers "github.com/router-for-me/CLIProxyAPI/v7/internal/api/handlers/management"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/api/middleware"
+	honchomodule "github.com/router-for-me/CLIProxyAPI/v7/internal/api/modules/honcho"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/cache"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/home"
@@ -243,6 +245,9 @@ type Server struct {
 	// pluginHost owns dynamic plugin Management API route dispatch.
 	pluginHost *pluginhost.Host
 
+	// honchoModule is the local Honcho embedding adapter module (optional, disabled by default).
+	honchoModule *honchomodule.Module
+
 	// managementRoutesRegistered tracks whether the management routes have been attached to the engine.
 	managementRoutesRegistered atomic.Bool
 	// managementRoutesEnabled controls whether management endpoints serve real handlers.
@@ -386,6 +391,12 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 
 	// Setup routes
 	s.setupRoutes()
+
+	// Optional Honcho embedding adapter (disabled by default; isolated from /v1 routes).
+	s.honchoModule = honchomodule.New()
+	if err := s.honchoModule.Register(engine, cfg); err != nil {
+		log.Errorf("Failed to register Honcho module: %v", err)
+	}
 
 	// Apply additional router configurators from options
 	if optionState.routerConfigurator != nil {
@@ -1933,6 +1944,18 @@ func (s *Server) UpdateClients(cfg *config.Config) {
 		s.mgmt.SetPluginHost(s.pluginHost)
 	}
 	s.refreshPluginManagementRoutes()
+
+	honchoConfigChanged := oldCfg == nil || !reflect.DeepEqual(oldCfg.HonchoEmbedding, cfg.HonchoEmbedding)
+	if honchoConfigChanged {
+		if s.honchoModule != nil {
+			log.Debugf("triggering honcho embedding module config update")
+			if err := s.honchoModule.OnConfigUpdated(cfg); err != nil {
+				log.Errorf("failed to update Honcho embedding module config: %v", err)
+			}
+		} else {
+			log.Warnf("honcho embedding module is nil, skipping config update")
+		}
+	}
 
 	// Count client sources from configuration and auth store.
 	authEntries := 0
