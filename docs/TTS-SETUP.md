@@ -2,7 +2,8 @@
 
 This document covers Text-to-Speech and real-time audio features in CLIProxyAPI.
 
-**Tested on:** CLIProxyAPI v6.6.98
+**Tested on:** CLIProxyAPI v6.6.98  
+**Upstream base (local fork):** synced to v7.2.71 on 2026-07-12 — see [SESSION-2026-07-12-upstream-v7.2.71.md](./SESSION-2026-07-12-upstream-v7.2.71.md)
 
 ## Overview
 
