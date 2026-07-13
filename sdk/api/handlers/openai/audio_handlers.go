@@ -12,8 +12,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/interfaces"
-	"github.com/router-for-me/CLIProxyAPI/v6/sdk/api/handlers"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
 	"github.com/tidwall/gjson"
 )
 
@@ -72,13 +72,13 @@ var contentTypeMapping = map[string]string{
 
 // SpeechRequest represents the OpenAI audio/speech request format.
 type SpeechRequest struct {
-	Model          string   `json:"model"`
-	Input          string   `json:"input"`
-	Voice          string   `json:"voice"`
-	ResponseFormat string   `json:"response_format,omitempty"`
-	Speed          float64  `json:"speed,omitempty"`
+	Model          string  `json:"model"`
+	Input          string  `json:"input"`
+	Voice          string  `json:"voice"`
+	ResponseFormat string  `json:"response_format,omitempty"`
+	Speed          float64 `json:"speed,omitempty"`
 	// Extended fields for Gemini features
-	Speakers       []Speaker `json:"speakers,omitempty"` // Multi-speaker support
+	Speakers []Speaker `json:"speakers,omitempty"` // Multi-speaker support
 }
 
 // Speaker represents a speaker configuration for multi-speaker TTS.
@@ -151,7 +151,7 @@ func (h *OpenAIAudioHandler) Speech(c *gin.Context) {
 	ctx, cancel := h.GetContextWithCancel(h, c, c.Request.Context())
 	defer cancel()
 
-	respBytes, errMsg := h.ExecuteWithAuthManager(ctx, h.HandlerType(), geminiModel, geminiRequest, "")
+	respBytes, _, errMsg := h.ExecuteWithAuthManager(ctx, h.HandlerType(), geminiModel, geminiRequest, "")
 	if errMsg != nil {
 		h.WriteErrorResponse(c, errMsg)
 		return

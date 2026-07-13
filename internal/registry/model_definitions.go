@@ -329,3 +329,24 @@ func LookupStaticModelInfo(modelID string) *ModelInfo {
 
 	return nil
 }
+
+// GetAllStaticModels returns all static model definitions from all providers.
+// This aggregates models for management pricing configuration endpoints.
+func GetAllStaticModels() []*ModelInfo {
+	allModelSets := [][]*ModelInfo{
+		GetClaudeModels(),
+		GetGeminiModels(),
+		GetGeminiVertexModels(),
+		GetAIStudioModels(),
+		GetCodexProModels(),
+		GetKimiModels(),
+		GetAntigravityModels(),
+		GetXAIModels(),
+	}
+
+	var result []*ModelInfo
+	for _, models := range allModelSets {
+		result = append(result, models...)
+	}
+	return result
+}

@@ -38,10 +38,12 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/safemode"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/wsrelay"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v7/sdk/access"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers/claude"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers/gemini"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers/live"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers/openai"
 	sdkAuth "github.com/router-for-me/CLIProxyAPI/v7/sdk/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
@@ -256,6 +258,11 @@ type Server struct {
 	keepAliveOnTimeout func()
 	keepAliveHeartbeat chan struct{}
 	keepAliveStop      chan struct{}
+
+	// Live API relay through AI Studio Build WebSocket tunnel
+	wsRelay              *wsrelay.Manager
+	liveProviderSelector func() string
+	liveHandler          *live.LiveHandler
 
 	exampleAPIKeySafeModeEnabled bool
 	exampleAPIKeySafeModeActive  atomic.Bool
@@ -512,6 +519,7 @@ func (s *Server) setupRoutes() {
 
 	s.engine.GET("/management.html", s.serveManagementControlPanel)
 	openaiHandlers := openai.NewOpenAIAPIHandler(s.handlers)
+	openaiAudioHandlers := openai.NewOpenAIAudioHandler(s.handlers)
 	geminiHandlers := gemini.NewGeminiAPIHandler(s.handlers)
 	claudeCodeHandlers := claude.NewClaudeCodeAPIHandler(s.handlers)
 	openaiResponsesHandlers := openai.NewOpenAIResponsesAPIHandler(s.handlers)
@@ -536,7 +544,13 @@ func (s *Server) setupRoutes() {
 		v1.POST("/responses", openaiResponsesHandlers.Responses)
 		v1.POST("/responses/compact", openaiResponsesHandlers.Compact)
 		v1.POST("/alpha/search", s.codexAlphaSearch)
+		v1.POST("/audio/speech", openaiAudioHandlers.Speech)
 	}
+
+	// Live API WebSocket endpoint for real-time audio/video.
+	// Configured later via SetLiveAPIRelay when wsrelay is available.
+	s.liveHandler = live.NewLiveHandler(nil, nil)
+	s.engine.GET("/v1/realtime", s.liveHandler.HandleWebSocket)
 
 	openaiV1 := s.engine.Group("/openai/v1")
 	openaiV1.Use(AuthMiddleware(s.accessManager))
@@ -766,6 +780,19 @@ func (s *Server) AttachWebsocketRoute(path string, handler http.Handler) {
 	}
 
 	s.engine.GET(trimmed, conditionalAuth, finalHandler)
+}
+
+// SetLiveAPIRelay configures the Live API handler to use the wsrelay manager for tunneling
+// through AI Studio Build instead of direct Gemini API connections.
+func (s *Server) SetLiveAPIRelay(relay *wsrelay.Manager, providerSelector func() string) {
+	if s == nil || s.liveHandler == nil {
+		return
+	}
+	s.wsRelay = relay
+	s.liveProviderSelector = providerSelector
+	s.liveHandler.WSRelay = relay
+	s.liveHandler.ProviderSelector = providerSelector
+	log.Info("Live API relay configured for AI Studio Build tunneling")
 }
 
 func (s *Server) registerManagementRoutes() {
