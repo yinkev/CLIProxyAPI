@@ -16,7 +16,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,7 +27,6 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/access"
 	managementHandlers "github.com/router-for-me/CLIProxyAPI/v7/internal/api/handlers/management"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/api/middleware"
-	honchomodule "github.com/router-for-me/CLIProxyAPI/v7/internal/api/modules/honcho"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/cache"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/home"
@@ -40,12 +38,10 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/safemode"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/wsrelay"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v7/sdk/access"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers/claude"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers/gemini"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers/live"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers/openai"
 	sdkAuth "github.com/router-for-me/CLIProxyAPI/v7/sdk/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
@@ -245,9 +241,6 @@ type Server struct {
 	// pluginHost owns dynamic plugin Management API route dispatch.
 	pluginHost *pluginhost.Host
 
-	// honchoModule is the local Honcho embedding adapter module (optional, disabled by default).
-	honchoModule *honchomodule.Module
-
 	// managementRoutesRegistered tracks whether the management routes have been attached to the engine.
 	managementRoutesRegistered atomic.Bool
 	// managementRoutesEnabled controls whether management endpoints serve real handlers.
@@ -263,11 +256,6 @@ type Server struct {
 	keepAliveOnTimeout func()
 	keepAliveHeartbeat chan struct{}
 	keepAliveStop      chan struct{}
-
-	// Live API relay through AI Studio Build WebSocket tunnel
-	wsRelay              *wsrelay.Manager
-	liveProviderSelector func() string
-	liveHandler          *live.LiveHandler
 
 	exampleAPIKeySafeModeEnabled bool
 	exampleAPIKeySafeModeActive  atomic.Bool
@@ -391,12 +379,6 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 
 	// Setup routes
 	s.setupRoutes()
-
-	// Optional Honcho embedding adapter (disabled by default; isolated from /v1 routes).
-	s.honchoModule = honchomodule.New()
-	if err := s.honchoModule.Register(engine, cfg); err != nil {
-		log.Errorf("Failed to register Honcho module: %v", err)
-	}
 
 	// Apply additional router configurators from options
 	if optionState.routerConfigurator != nil {
@@ -530,7 +512,6 @@ func (s *Server) setupRoutes() {
 
 	s.engine.GET("/management.html", s.serveManagementControlPanel)
 	openaiHandlers := openai.NewOpenAIAPIHandler(s.handlers)
-	openaiAudioHandlers := openai.NewOpenAIAudioHandler(s.handlers)
 	geminiHandlers := gemini.NewGeminiAPIHandler(s.handlers)
 	claudeCodeHandlers := claude.NewClaudeCodeAPIHandler(s.handlers)
 	openaiResponsesHandlers := openai.NewOpenAIResponsesAPIHandler(s.handlers)
@@ -555,13 +536,7 @@ func (s *Server) setupRoutes() {
 		v1.POST("/responses", openaiResponsesHandlers.Responses)
 		v1.POST("/responses/compact", openaiResponsesHandlers.Compact)
 		v1.POST("/alpha/search", s.codexAlphaSearch)
-		v1.POST("/audio/speech", openaiAudioHandlers.Speech)
 	}
-
-	// Live API WebSocket endpoint for real-time audio/video.
-	// Configured later via SetLiveAPIRelay when wsrelay is available.
-	s.liveHandler = live.NewLiveHandler(nil, nil)
-	s.engine.GET("/v1/realtime", s.liveHandler.HandleWebSocket)
 
 	openaiV1 := s.engine.Group("/openai/v1")
 	openaiV1.Use(AuthMiddleware(s.accessManager))
@@ -817,19 +792,6 @@ func (s *Server) AttachWebsocketRoute(path string, handler http.Handler) {
 	}
 
 	s.engine.GET(trimmed, conditionalAuth, finalHandler)
-}
-
-// SetLiveAPIRelay configures the Live API handler to use the wsrelay manager for tunneling
-// through AI Studio Build instead of direct Gemini API connections.
-func (s *Server) SetLiveAPIRelay(relay *wsrelay.Manager, providerSelector func() string) {
-	if s == nil || s.liveHandler == nil {
-		return
-	}
-	s.wsRelay = relay
-	s.liveProviderSelector = providerSelector
-	s.liveHandler.WSRelay = relay
-	s.liveHandler.ProviderSelector = providerSelector
-	log.Info("Live API relay configured for AI Studio Build tunneling")
 }
 
 func (s *Server) registerManagementRoutes() {
@@ -1977,18 +1939,6 @@ func (s *Server) UpdateClients(cfg *config.Config) {
 		s.mgmt.SetPluginHost(s.pluginHost)
 	}
 	s.refreshPluginManagementRoutes()
-
-	honchoConfigChanged := oldCfg == nil || !reflect.DeepEqual(oldCfg.HonchoEmbedding, cfg.HonchoEmbedding)
-	if honchoConfigChanged {
-		if s.honchoModule != nil {
-			log.Debugf("triggering honcho embedding module config update")
-			if err := s.honchoModule.OnConfigUpdated(cfg); err != nil {
-				log.Errorf("failed to update Honcho embedding module config: %v", err)
-			}
-		} else {
-			log.Warnf("honcho embedding module is nil, skipping config update")
-		}
-	}
 
 	// Count client sources from configuration and auth store.
 	authEntries := 0

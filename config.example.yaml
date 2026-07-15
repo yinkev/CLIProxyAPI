@@ -188,23 +188,6 @@ codex:
 # When true, enable authentication for the WebSocket API (/v1/ws).
 ws-auth: true
 
-# Optional Honcho-only embedding adapter.
-# This exposes POST /honcho/v1/embeddings on this same server.
-# It is intentionally separate from normal /v1 routes so Honcho-specific
-# vector truncation cannot affect Codex/Gemini/Claude traffic.
-honcho-embedding:
-  enabled: false
-  # OpenAI-compatible embedding server base URL. For llama-server, use the /v1 base.
-  upstream-base-url: "http://127.0.0.1:8098/v1"
-  # Model name sent to the upstream embedding server.
-  served-model: "Qwen3-Embedding-4B"
-  # Honcho pgvector currently expects 1536-dimensional embeddings.
-  dimensions: 1536
-  # Re-normalize after truncating Matryoshka embeddings.
-  normalize: true
-  # Optional upstream bearer token. Leave empty for local llama-server.
-  upstream-api-key: ""
-
 # When > 0, emit blank lines every N seconds for non-streaming responses to prevent idle timeouts.
 nonstream-keepalive-interval: 0
 # Streaming behavior (SSE keep-alives + safe bootstrap retries).

@@ -126,14 +126,12 @@ PackyCode provides special discounts for our software users: register using <a h
 ## Overview
 
 - OpenAI/Gemini/Claude/Grok compatible API endpoints for CLI models
-- **Text-to-Speech (TTS)** - OpenAI-compatible `/v1/audio/speech` endpoint using Gemini TTS
-- **Live API** - Real-time bidirectional audio/video via WebSocket (`/v1/realtime`)
 - OpenAI Codex support (GPT models) via OAuth login
 - Claude Code support via OAuth login
 - Grok Build support via OAuth login
 - Streaming, non-streaming, and WebSocket responses where supported
 - Function calling/tools support
-- Multimodal input support (text, images, audio, video)
+- Multimodal input support (text and images)
 - Multiple accounts with round-robin load balancing (Gemini, OpenAI, Claude, Grok)
 - Simple CLI authentication flows (Gemini, OpenAI, Claude, Grok)
 - Generative Language API Key support
@@ -170,7 +168,6 @@ Full CLIProxyAPI management center with request-level monitoring and cost estima
 - Advanced (executors & translators): [docs/sdk-advanced.md](docs/sdk-advanced.md)
 - Access: [docs/sdk-access.md](docs/sdk-access.md)
 - Watcher: [docs/sdk-watcher.md](docs/sdk-watcher.md)
-- **TTS & Live Audio**: [docs/TTS-SETUP.md](docs/TTS-SETUP.md)
 - Custom Provider Example: `examples/custom-provider`
 
 ## Contributing
